@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Feed the Monster!</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { 
+      font-family: 'Poppins', sans-serif;
+      margin: 0;
+      padding: 0;
+    }
+
+    .monster-container img {
+      user-select: none;
+      pointer-events: none; /* monster image won't block button */
+    }
+
+    /* Upload button hover */
+    .upload-label {
+      transition: background 0.3s ease-in-out, transform 0.2s ease-in-out;
+    }
+    .upload-label:hover {
+      transform: scale(1.05);
+    }
+
+    /* Monster bounce animation */
+    @keyframes monsterBounce {
+      0%   { transform: scale(1); }
+      30%  { transform: scale(1.1); }
+      60%  { transform: scale(0.95); }
+      100% { transform: scale(1); }
+    }
+    .monster-bounce {
+      animation: monsterBounce 0.5s ease;
+    }
+
+    /* Toast animation */
+    #toast {
+      opacity: 0;
+      transform: translate(-50%, 30px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      z-index: 1000;
+    }
+    #toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    /* Ensure proper layering */
+    .monster-container {
+      position: relative;
+      z-index: 1;
+    }
+
+    #upload-area {
+      z-index: 2;
+    }
+
+    #reupload-btn {
+      z-index: 3;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center min-h-screen">
+
+  <div id="monsterApp" class="text-center p-8 bg-white/20 backdrop-blur-lg rounded-3xl shadow-2xl max-w-md w-full">
+
+    <!-- Heading -->
+    <h1 id="status-text" class="text-4xl font-bold text-white mb-6">Feed Me!</h1>
+
+    <!-- Monster -->
+    <div class="monster-container relative w-64 h-64 mx-auto">
+      <img id="monster-hungry" src="hungry.png" alt="Hungry Monster" class="w-full h-full object-contain">
+      <img id="monster-yummy" src="yumm.png" alt="Yummy Monster" class="w-full h-full object-contain hidden absolute top-0 left-0">
+
+      <!-- Upload -->
+      <div id="upload-area" class="absolute bottom-4 left-1/2 -translate-x-1/2">
+        <form id="upload-form" enctype="multipart/form-data">
+          <label for="file-upload" class="upload-label flex items-center justify-center w-32 h-12 bg-gray-800/70 text-white rounded-xl hover:bg-gray-900 text-lg font-semibold cursor-pointer shadow-lg">
+            Upload
+          </label>
+          <input id="file-upload" type="file" name="file" class="hidden" accept="image/*">
+        </form>
+      </div>
+    </div>
+
+    <!-- Re-upload Button -->
+    <button id="reupload-btn" type="button"
+      class="hidden mt-6 px-6 py-2 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-600 transition">
+      You have more?
+    </button>
+  </div>
+
+  <!-- Toast Popup -->
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white px-6 py-3 rounded-xl shadow-lg text-lg font-semibold"></div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const fileInput = document.getElementById('file-upload');
+      const hungryMonster = document.getElementById('monster-hungry');
+      const yummyMonster = document.getElementById('monster-yummy');
+      const statusText = document.getElementById('status-text');
+      const reuploadBtn = document.getElementById('reupload-btn');
+      const uploadArea = document.getElementById('upload-area');
+      const toast = document.getElementById('toast');
+      const uploadForm = document.getElementById('upload-form');
+
+      // State tracking to prevent unwanted switches
+      let isMonsterFed = false;
+      let isUploading = false;
+
+      // Toast function
+      function showToast(message, type = "success") {
+        toast.textContent = message;
+        toast.classList.remove("hidden");
+        toast.classList.add("show");
+
+        // Style by type
+        if (type === "error") {
+          toast.style.backgroundColor = "rgba(220, 38, 38, 0.9)"; // red
+        } else {
+          toast.style.backgroundColor = "rgba(34, 197, 94, 0.9)"; // green
+        }
+
+        setTimeout(() => {
+          toast.classList.remove("show");
+          setTimeout(() => toast.classList.add("hidden"), 500);
+        }, 3000);
+      }
+
+      // Function to set monster to fed state
+      function setMonsterFed() {
+        console.log('Setting monster to fed state');
+        isMonsterFed = true;
+        hungryMonster.classList.add('hidden');
+        yummyMonster.classList.remove('hidden');
+        yummyMonster.classList.add('monster-bounce');
+        setTimeout(() => yummyMonster.classList.remove('monster-bounce'), 500);
+        statusText.textContent = 'Yummy!';
+        uploadArea.classList.add('hidden');
+      }
+
+      // Function to set monster to hungry state
+      function setMonsterHungry() {
+        console.log('Setting monster to hungry state');
+        isMonsterFed = false;
+        isUploading = false;
+        hungryMonster.classList.remove('hidden');
+        yummyMonster.classList.add('hidden');
+        statusText.textContent = 'Feed Me!';
+        uploadArea.classList.remove('hidden');
+        reuploadBtn.classList.add('hidden');
+        fileInput.value = '';
+      }
+
+      // Prevent form submission
+      uploadForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        return false;
+      });
+
+      fileInput.addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file || isUploading) return;
+
+        console.log('File selected:', file.name);
+        isUploading = true;
+
+        // Switch to fed state immediately
+        setMonsterFed();
+
+        // Prepare upload
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+          const response = await fetch('http://127.0.0.1:5000/upload', {
+            method: 'POST',
+            body: formData,
+          });
+
+          const result = await response.json();
+          if (response.ok) {
+            showToast(result.message || 'Image uploaded successfully!', "success");
+            console.log('Upload successful');
+          } else {
+            showToast('Upload failed: ' + (result.error || 'Unknown error'), "error");
+            console.log('Upload failed:', result.error);
+          }
+        } catch (error) {
+          console.error('Error:', error);
+          showToast('Network error or backend not running.', "error");
+        }
+
+        // Show reupload button after upload attempt - only if still fed
+        setTimeout(() => {
+          if (isMonsterFed) {
+            reuploadBtn.classList.remove('hidden');
+            console.log('Showing reupload button');
+          }
+          isUploading = false;
+        }, 1000);
+      });
+
+      // Reset ONLY when user explicitly clicks the reupload button
+      reuploadBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        console.log('Reupload button clicked');
+        setMonsterHungry();
+      });
+    });
+  </script>
+</body>
+</html>
