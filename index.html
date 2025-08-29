@@ -15,10 +15,9 @@
 
     .monster-container img {
       user-select: none;
-      pointer-events: none; /* monster image won't block button */
+      pointer-events: none;
     }
 
-    /* Upload button hover */
     .upload-label {
       transition: background 0.3s ease-in-out, transform 0.2s ease-in-out;
     }
@@ -26,7 +25,6 @@
       transform: scale(1.05);
     }
 
-    /* Monster bounce animation */
     @keyframes monsterBounce {
       0%   { transform: scale(1); }
       30%  { transform: scale(1.1); }
@@ -37,7 +35,14 @@
       animation: monsterBounce 0.5s ease;
     }
 
-    /* Toast animation */
+    @keyframes eating {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    .monster-eating {
+      animation: eating 0.8s ease-in-out infinite;
+    }
+
     #toast {
       opacity: 0;
       transform: translate(-50%, 30px);
@@ -49,22 +54,50 @@
       transform: translate(-50%, 0);
     }
 
-    /* Ensure proper layering */
-    .monster-container {
-      position: relative;
-      z-index: 1;
+    .upload-progress {
+      width: 100%;
+      height: 4px;
+      background-color: rgba(255, 255, 255, 0.3);
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 8px;
     }
 
-    #upload-area {
-      z-index: 2;
+    .upload-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #10b981, #34d399);
+      border-radius: 2px;
+      transition: width 0.3s ease;
+      width: 0%;
     }
 
-    #reupload-btn {
-      z-index: 3;
+    .wake-up-notice {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: linear-gradient(90deg, #f59e0b, #f97316);
+      color: white;
+      text-align: center;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 1001;
+      transform: translateY(-100%);
+      transition: transform 0.3s ease;
+    }
+
+    .wake-up-notice.show {
+      transform: translateY(0);
     }
   </style>
 </head>
 <body class="bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center min-h-screen">
+
+  <!-- Wake up notice for Render free tier -->
+  <div id="wake-up-notice" class="wake-up-notice">
+    🌙 Waking up the monster... This may take 30 seconds on first visit.
+  </div>
 
   <div id="monsterApp" class="text-center p-8 bg-white/20 backdrop-blur-lg rounded-3xl shadow-2xl max-w-md w-full">
 
@@ -74,15 +107,21 @@
     <!-- Monster -->
     <div class="monster-container relative w-64 h-64 mx-auto">
       <img id="monster-hungry" src="hungry.png" alt="Hungry Monster" class="w-full h-full object-contain">
+      <img id="monster-eating" src="hungry.png" alt="Eating Monster" class="w-full h-full object-contain hidden absolute top-0 left-0 monster-eating">
       <img id="monster-yummy" src="yumm.png" alt="Yummy Monster" class="w-full h-full object-contain hidden absolute top-0 left-0">
 
-      <!-- Upload -->
+      <!-- Upload Area -->
       <div id="upload-area" class="absolute bottom-4 left-1/2 -translate-x-1/2">
         <form id="upload-form" enctype="multipart/form-data">
           <label for="file-upload" class="upload-label flex items-center justify-center w-32 h-12 bg-gray-800/70 text-white rounded-xl hover:bg-gray-900 text-lg font-semibold cursor-pointer shadow-lg">
-            Upload
+            <span id="upload-text">Upload</span>
           </label>
           <input id="file-upload" type="file" name="file" class="hidden" accept="image/*">
+          
+          <!-- Progress Bar -->
+          <div id="upload-progress" class="upload-progress hidden">
+            <div id="upload-progress-bar" class="upload-progress-bar"></div>
+          </div>
         </form>
       </div>
     </div>
@@ -92,6 +131,16 @@
       class="hidden mt-6 px-6 py-2 bg-yellow-500 text-black font-bold rounded-xl hover:bg-yellow-600 transition">
       You have more?
     </button>
+
+    <!-- Connection Status -->
+    <div id="connection-status" class="mt-4 text-sm text-white/70">
+      <span id="status-indicator">🔄</span> <span id="status-text-detail">Checking connection...</span>
+    </div>
+
+    <!-- Stats (optional) -->
+    <div id="stats" class="mt-2 text-xs text-white/50 hidden">
+      <span id="upload-count">0 images fed to monster</span>
+    </div>
   </div>
 
   <!-- Toast Popup -->
@@ -101,16 +150,85 @@
     document.addEventListener('DOMContentLoaded', () => {
       const fileInput = document.getElementById('file-upload');
       const hungryMonster = document.getElementById('monster-hungry');
+      const eatingMonster = document.getElementById('monster-eating');
       const yummyMonster = document.getElementById('monster-yummy');
       const statusText = document.getElementById('status-text');
+      const uploadText = document.getElementById('upload-text');
       const reuploadBtn = document.getElementById('reupload-btn');
       const uploadArea = document.getElementById('upload-area');
+      const uploadProgress = document.getElementById('upload-progress');
+      const uploadProgressBar = document.getElementById('upload-progress-bar');
       const toast = document.getElementById('toast');
       const uploadForm = document.getElementById('upload-form');
+      const connectionStatus = document.getElementById('connection-status');
+      const statusIndicator = document.getElementById('status-indicator');
+      const statusTextDetail = document.getElementById('status-text-detail');
+      const wakeUpNotice = document.getElementById('wake-up-notice');
+      const stats = document.getElementById('stats');
+      const uploadCount = document.getElementById('upload-count');
 
-      // State tracking to prevent unwanted switches
+      // For Render deployment - always use same origin
+      const API_BASE_URL = window.location.origin;
+
       let isMonsterFed = false;
       let isUploading = false;
+      let totalUploads = 0;
+
+      // Test backend connection with wake-up handling
+      async function testConnection() {
+        const startTime = Date.now();
+        let showedWakeUpNotice = false;
+
+        try {
+          // Show wake-up notice after 3 seconds
+          const wakeUpTimeout = setTimeout(() => {
+            wakeUpNotice.classList.add('show');
+            showedWakeUpNotice = true;
+          }, 3000);
+
+          const response = await fetch(`${API_BASE_URL}/health`);
+          
+          clearTimeout(wakeUpTimeout);
+          
+          if (response.ok) {
+            const healthData = await response.json();
+            statusIndicator.textContent = '🟢';
+            statusTextDetail.textContent = 'Backend connected';
+            
+            // Show stats if available
+            if (healthData.upload_count !== undefined) {
+              totalUploads = healthData.upload_count;
+              uploadCount.textContent = `${totalUploads} images fed to monster`;
+              stats.classList.remove('hidden');
+            }
+            
+            // Hide wake-up notice
+            if (showedWakeUpNotice) {
+              setTimeout(() => {
+                wakeUpNotice.classList.remove('show');
+              }, 1000);
+            }
+          } else {
+            throw new Error('Health check failed');
+          }
+        } catch (error) {
+          const duration = Date.now() - startTime;
+          
+          if (duration > 10000) {
+            statusIndicator.textContent = '🔴';
+            statusTextDetail.textContent = 'Backend offline';
+            showToast('Backend is not responding. Please try again later.', 'error');
+          } else {
+            statusIndicator.textContent = '🟡';
+            statusTextDetail.textContent = 'Waking up...';
+          }
+          
+          // Hide wake-up notice
+          setTimeout(() => {
+            wakeUpNotice.classList.remove('show');
+          }, 500);
+        }
+      }
 
       // Toast function
       function showToast(message, type = "success") {
@@ -118,12 +236,9 @@
         toast.classList.remove("hidden");
         toast.classList.add("show");
 
-        // Style by type
-        if (type === "error") {
-          toast.style.backgroundColor = "rgba(220, 38, 38, 0.9)"; // red
-        } else {
-          toast.style.backgroundColor = "rgba(34, 197, 94, 0.9)"; // green
-        }
+        toast.style.backgroundColor = type === "error" 
+          ? "rgba(220, 38, 38, 0.9)" 
+          : "rgba(34, 197, 94, 0.9)";
 
         setTimeout(() => {
           toast.classList.remove("show");
@@ -131,29 +246,63 @@
         }, 3000);
       }
 
-      // Function to set monster to fed state
+      // Monster state functions
+      function setMonsterHungry() {
+        isMonsterFed = false;
+        isUploading = false;
+        hungryMonster.classList.remove('hidden');
+        eatingMonster.classList.add('hidden');
+        yummyMonster.classList.add('hidden');
+        statusText.textContent = 'Feed Me!';
+        uploadText.textContent = 'Upload';
+        uploadArea.classList.remove('hidden');
+        reuploadBtn.classList.add('hidden');
+        uploadProgress.classList.add('hidden');
+        uploadProgressBar.style.width = '0%';
+        fileInput.value = '';
+        fileInput.disabled = false;
+      }
+
+      function setMonsterEating() {
+        hungryMonster.classList.add('hidden');
+        eatingMonster.classList.remove('hidden');
+        yummyMonster.classList.add('hidden');
+        statusText.textContent = 'Nom nom...';
+        uploadText.textContent = 'Uploading...';
+        uploadProgress.classList.remove('hidden');
+        fileInput.disabled = true;
+      }
+
       function setMonsterFed() {
-        console.log('Setting monster to fed state');
         isMonsterFed = true;
         hungryMonster.classList.add('hidden');
+        eatingMonster.classList.add('hidden');
         yummyMonster.classList.remove('hidden');
         yummyMonster.classList.add('monster-bounce');
         setTimeout(() => yummyMonster.classList.remove('monster-bounce'), 500);
         statusText.textContent = 'Yummy!';
         uploadArea.classList.add('hidden');
+        uploadProgress.classList.add('hidden');
+        reuploadBtn.classList.remove('hidden');
+        
+        // Update stats
+        totalUploads++;
+        uploadCount.textContent = `${totalUploads} images fed to monster`;
+        stats.classList.remove('hidden');
       }
 
-      // Function to set monster to hungry state
-      function setMonsterHungry() {
-        console.log('Setting monster to hungry state');
-        isMonsterFed = false;
-        isUploading = false;
-        hungryMonster.classList.remove('hidden');
-        yummyMonster.classList.add('hidden');
-        statusText.textContent = 'Feed Me!';
-        uploadArea.classList.remove('hidden');
-        reuploadBtn.classList.add('hidden');
-        fileInput.value = '';
+      // Progress simulation
+      function simulateProgress() {
+        let progress = 0;
+        const interval = setInterval(() => {
+          progress += Math.random() * 25;
+          if (progress > 90) {
+            progress = 90;
+            clearInterval(interval);
+          }
+          uploadProgressBar.style.width = progress + '%';
+        }, 300);
+        return interval;
       }
 
       // Prevent form submission
@@ -162,56 +311,74 @@
         return false;
       });
 
+      // File upload handler
       fileInput.addEventListener('change', async (event) => {
         const file = event.target.files[0];
         if (!file || isUploading) return;
 
-        console.log('File selected:', file.name);
+        console.log('File selected:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2) + 'MB');
         isUploading = true;
+        setMonsterEating();
 
-        // Switch to fed state immediately
-        setMonsterFed();
-
-        // Prepare upload
+        const progressInterval = simulateProgress();
         const formData = new FormData();
         formData.append('file', file);
 
         try {
-          const response = await fetch('http://127.0.0.1:5000/upload', {
+          const response = await fetch(`${API_BASE_URL}/upload`, {
             method: 'POST',
             body: formData,
           });
 
           const result = await response.json();
-          if (response.ok) {
-            showToast(result.message || 'Image uploaded successfully!', "success");
-            console.log('Upload successful');
-          } else {
-            showToast('Upload failed: ' + (result.error || 'Unknown error'), "error");
-            console.log('Upload failed:', result.error);
-          }
-        } catch (error) {
-          console.error('Error:', error);
-          showToast('Network error or backend not running.', "error");
-        }
+          
+          // Complete progress bar
+          clearInterval(progressInterval);
+          uploadProgressBar.style.width = '100%';
 
-        // Show reupload button after upload attempt - only if still fed
-        setTimeout(() => {
-          if (isMonsterFed) {
-            reuploadBtn.classList.remove('hidden');
-            console.log('Showing reupload button');
-          }
-          isUploading = false;
-        }, 1000);
+          setTimeout(() => {
+            setMonsterFed();
+            
+            if (response.ok) {
+              showToast(result.message || 'Image uploaded successfully!', "success");
+              console.log('Upload successful:', result);
+            } else {
+              showToast('Upload failed: ' + (result.error || 'Unknown error'), "error");
+              console.error('Upload failed:', result);
+            }
+            
+            isUploading = false;
+          }, 800);
+
+        } catch (error) {
+          console.error('Upload error:', error);
+          clearInterval(progressInterval);
+          
+          setTimeout(() => {
+            setMonsterFed();
+            showToast('Network error. Please check your connection and try again.', "error");
+            isUploading = false;
+          }, 800);
+        }
       });
 
-      // Reset ONLY when user explicitly clicks the reupload button
+      // Reupload button handler
       reuploadBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         console.log('Reupload button clicked');
         setMonsterHungry();
       });
+
+      // Test connection on load
+      testConnection();
+
+      // Retry connection every 30 seconds if offline
+      setInterval(() => {
+        if (statusIndicator.textContent === '🔴') {
+          testConnection();
+        }
+      }, 30000);
     });
   </script>
 </body>
