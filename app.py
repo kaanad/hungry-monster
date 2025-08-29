@@ -12,7 +12,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configure database
-DATABASE_URL = os.environ.get('DATABASE_URL')
+DATABASE_URL = os.environ.get('postgresql://usere:shNSbLvCkgbC9YEtD2xBpf1S2JaUoxEA@dpg-d2oue4vfte5s738p9kvg-a.singapore-postgres.render.com/monster_56un')
 if DATABASE_URL:
     # For production (Render PostgreSQL)
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
@@ -213,3 +213,4 @@ def internal_error(e):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
