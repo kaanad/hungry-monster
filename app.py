@@ -1,7 +1,9 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from sqlalchemy import text
 import os
+import logging
 from datetime import datetime
 import uuid
 from werkzeug.utils import secure_filename
@@ -11,13 +13,16 @@ app = Flask(__name__)
 # Enable CORS
 CORS(app)
 
+# Configure logging (important for Render logs)
+logging.basicConfig(level=logging.INFO)
+
 # Configure database
-DATABASE_URL = os.environ.get('postgresql://usere:shNSbLvCkgbC9YEtD2xBpf1S2JaUoxEA@dpg-d2oue4vfte5s738p9kvg-a.singapore-postgres.render.com/monster_56un')
+DATABASE_URL = os.environ.get("DATABASE_URL")
 if DATABASE_URL:
     # For production (Render PostgreSQL)
     app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 else:
-    # For local development (SQLite)
+    # For local development (SQLite fallback)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///uploads.db'
 
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -33,8 +38,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp'}
 
 def allowed_file(filename):
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 # Database model
 class Upload(db.Model):
@@ -46,7 +50,7 @@ class Upload(db.Model):
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow)
     ip_address = db.Column(db.String(45))
 
-# Create tables
+# Create tables if they don’t exist
 with app.app_context():
     db.create_all()
 
@@ -91,36 +95,29 @@ def uploaded_file(filename):
 @app.route('/upload', methods=['POST'])
 def upload_file():
     try:
-        # Check if file is in request
         if 'file' not in request.files:
             return jsonify({"error": "No file provided"}), 400
-        
+
         file = request.files['file']
         if file.filename == '':
             return jsonify({"error": "No file selected"}), 400
-        
-        # Check file type
+
         if not allowed_file(file.filename):
             return jsonify({"error": "File type not allowed. Please upload an image."}), 400
-        
-        # Generate unique filename to prevent conflicts
+
         original_filename = secure_filename(file.filename)
         file_extension = original_filename.rsplit('.', 1)[1].lower()
         unique_filename = f"{uuid.uuid4().hex}.{file_extension}"
-        
-        # Save file
+
         filepath = os.path.join(UPLOAD_FOLDER, unique_filename)
         file.save(filepath)
-        
-        # Get file size
+
         file_size = os.path.getsize(filepath)
-        
-        # Get client IP (Render provides real IP in X-Forwarded-For)
+
         client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
         if client_ip:
             client_ip = client_ip.split(',')[0].strip()
-        
-        # Save record in database
+
         new_upload = Upload(
             filename=unique_filename,
             original_filename=original_filename,
@@ -130,30 +127,29 @@ def upload_file():
         )
         db.session.add(new_upload)
         db.session.commit()
-        
+
         return jsonify({
             "message": f"'{original_filename}' uploaded successfully!",
             "filename": unique_filename,
             "size": file_size,
             "url": f"/files/{unique_filename}"
         }), 200
-        
+
     except Exception as e:
         app.logger.error(f"Upload error: {str(e)}")
         return jsonify({"error": f"Upload failed: {str(e)}"}), 500
 
-# API to view uploads (for debugging/admin)
+# API to view uploads
 @app.route('/uploads', methods=['GET'])
 def get_uploads():
     try:
-        # Add pagination for large numbers of uploads
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
-        
+
         uploads = Upload.query.order_by(Upload.uploaded_at.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
-        
+
         data = [{
             "id": u.id,
             "original_filename": u.original_filename,
@@ -163,7 +159,7 @@ def get_uploads():
             "url": f"/files/{u.filename}",
             "ip": u.ip_address
         } for u in uploads.items]
-        
+
         return jsonify({
             "uploads": data,
             "total": uploads.total,
@@ -171,17 +167,16 @@ def get_uploads():
             "current_page": page,
             "per_page": per_page
         })
-        
+
     except Exception as e:
         app.logger.error(f"Get uploads error: {str(e)}")
         return jsonify({"error": f"Failed to fetch uploads: {str(e)}"}), 500
 
-# Health check endpoint (important for Render)
+# Health check endpoint
 @app.route('/health')
 def health_check():
     try:
-        # Test database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         return jsonify({
             "status": "healthy",
             "timestamp": datetime.utcnow().isoformat(),
@@ -190,7 +185,7 @@ def health_check():
         })
     except Exception as e:
         return jsonify({
-            "status": "unhealthy", 
+            "status": "unhealthy",
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }), 500
@@ -213,4 +208,3 @@ def internal_error(e):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
-
