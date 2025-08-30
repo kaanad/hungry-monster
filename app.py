@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from sqlalchemy import text
@@ -60,6 +60,79 @@ def index():
         return send_from_directory('.', 'index.html')
     return jsonify({"error": "Frontend not found. Ensure index.html is in the project root."}), 404
 
+# NEW: An HTML gallery page to view all uploaded files
+@app.route('/gallery')
+def view_uploads_gallery():
+    """Renders a beautiful gallery of all uploaded images."""
+    try:
+        uploads = Upload.query.order_by(Upload.uploaded_at.desc()).all()
+    except Exception as e:
+        app.logger.error(f"Database query failed: {e}")
+        return "Error: Could not retrieve images from the database.", 500
+
+    # Start building the HTML string
+    html = """
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Uploaded Files Gallery</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+        <style>
+            body { font-family: 'Inter', sans-serif; }
+        </style>
+    </head>
+    <body class="bg-gray-100">
+        <div class="container mx-auto px-4 py-8">
+            <h1 class="text-4xl font-bold text-center text-gray-800 mb-2">Image Gallery</h1>
+            <p class="text-center text-gray-500 mb-8">All the images the monster has been fed.</p>
+    """
+
+    if not uploads:
+        html += '<p class="text-center text-gray-600 mt-12">No images have been uploaded yet. Go feed the monster!</p>'
+    else:
+        html += '<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">'
+        for upload in uploads:
+            try:
+                # Construct the URL for the image
+                image_url = url_for('uploaded_file', filename=upload.filename, _external=True)
+                # Format file size to be readable
+                if upload.file_size:
+                    size_kb = upload.file_size / 1024
+                    size_display = f"{size_kb:.1f} KB"
+                else:
+                    size_display = "N/A"
+
+                card_html = f"""
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden transform hover:scale-105 transition-transform duration-300 group">
+                    <a href="{image_url}" target="_blank">
+                        <img src="{image_url}" alt="{upload.original_filename}" class="w-full h-56 object-cover" onerror="this.onerror=null;this.src='https://placehold.co/600x400/EEE/31343C?text=Image+Not+Found';">
+                    </a>
+                    <div class="p-4">
+                        <p class="font-semibold text-gray-800 truncate" title="{upload.original_filename}">{upload.original_filename}</p>
+                        <p class="text-sm text-gray-500">{upload.uploaded_at.strftime('%b %d, %Y %I:%M %p')}</p>
+                        <p class="text-sm text-gray-500">{size_display}</p>
+                    </div>
+                </div>
+                """
+                html += card_html
+            except Exception as e:
+                app.logger.error(f"Error processing upload ID {upload.id}: {e}")
+                continue # Skip this card if there's an error
+        html += '</div>'
+
+    html += """
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
 # Serve static monster images
 @app.route('/hungry.png')
 def hungry_image():
@@ -78,9 +151,10 @@ def api_info():
             "upload": "/upload (POST)",
             "uploads": "/uploads (GET)",
             "files": "/files/<filename> (GET)",
+            "gallery": "/gallery (GET)",
             "health": "/health (GET)"
         },
-        "version": "1.0.0"
+        "version": "1.1.0"
     })
 
 # Serve uploaded files
@@ -192,3 +266,4 @@ def internal_error(e):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
