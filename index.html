@@ -197,4 +197,526 @@
 
     <!-- Heading -->
     <h1 id="status-text" class="text-4xl font-bold text-white mb-2">Feed Me!</h1>
-    <p
+    <p id="subtitle" class="text-white/80 mb-6">Drag & drop or click to upload images</p>
+
+    <!-- Monster -->
+    <div class="monster-container relative w-64 h-64 mx-auto drop-zone" id="drop-zone">
+      <img id="monster-hungry" src="hungry.png" alt="Hungry Monster" class="w-full h-full object-contain">
+      <img id="monster-eating" src="hungry.png" alt="Eating Monster" class="w-full h-full object-contain hidden absolute top-0 left-0 monster-eating">
+      <img id="monster-yummy" src="yumm.png" alt="Yummy Monster" class="w-full h-full object-contain hidden absolute top-0 left-0">
+
+      <!-- Upload Area -->
+      <div id="upload-area" class="absolute bottom-4 left-1/2 -translate-x-1/2">
+        <form id="upload-form" enctype="multipart/form-data">
+          <label for="file-upload" class="upload-label flex items-center justify-center w-36 h-14 bg-gray-800/70 text-white rounded-xl hover:bg-gray-900 text-lg font-semibold cursor-pointer shadow-lg">
+            <span id="upload-text">📷 Upload</span>
+          </label>
+          <input id="file-upload" type="file" name="file" class="hidden" accept="image/*" multiple>
+          
+          <!-- File info display -->
+          <div id="file-info" class="file-info">
+            <div id="file-details"></div>
+          </div>
+          
+          <!-- Progress Bar -->
+          <div id="upload-progress" class="upload-progress hidden">
+            <div id="upload-progress-bar" class="upload-progress-bar"></div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Re-upload Button -->
+    <button id="reupload-btn" type="button"
+      class="hidden mt-6 px-8 py-3 bg-gradient-to-r from-yellow-400 to-orange-400 text-black font-bold rounded-xl hover:from-yellow-500 hover:to-orange-500 transition-all duration-300 transform hover:scale-105 shadow-lg">
+      🍽️ Feed Me More!
+    </button>
+
+    <!-- Gallery Button -->
+    <a href="/gallery" id="gallery-btn" 
+       class="hidden mt-4 inline-block px-6 py-2 bg-white/20 text-white font-semibold rounded-lg hover:bg-white/30 transition-all duration-300 backdrop-blur-sm">
+      🖼️ View Gallery
+    </a>
+
+    <!-- Connection Status -->
+    <div id="connection-status" class="mt-6 text-sm text-white/70">
+      <span id="status-indicator">🔄</span> <span id="status-text-detail">Checking connection...</span>
+    </div>
+
+    <!-- Stats Card -->
+    <div id="stats-card" class="stats-card hidden">
+      <div class="grid grid-cols-2 gap-4 text-white text-sm">
+        <div class="text-center">
+          <div class="text-2xl font-bold" id="total-uploads">0</div>
+          <div class="text-white/70">Images Fed</div>
+        </div>
+        <div class="text-center">
+          <div class="text-2xl font-bold" id="monster-mood">😴</div>
+          <div class="text-white/70">Monster Mood</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload Tips -->
+    <div id="upload-tips" class="mt-4 text-xs text-white/50">
+      <p>💡 Supports: PNG, JPG, GIF, WebP • Max 16MB • Drag & drop enabled</p>
+    </div>
+  </div>
+
+  <!-- Toast Popup -->
+  <div id="toast" class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 bg-black/80 text-white px-6 py-3 rounded-xl shadow-lg text-lg font-semibold max-w-sm text-center"></div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // Get all DOM elements
+      const fileInput = document.getElementById('file-upload');
+      const hungryMonster = document.getElementById('monster-hungry');
+      const eatingMonster = document.getElementById('monster-eating');
+      const yummyMonster = document.getElementById('monster-yummy');
+      const statusText = document.getElementById('status-text');
+      const subtitle = document.getElementById('subtitle');
+      const uploadText = document.getElementById('upload-text');
+      const reuploadBtn = document.getElementById('reupload-btn');
+      const galleryBtn = document.getElementById('gallery-btn');
+      const uploadArea = document.getElementById('upload-area');
+      const uploadProgress = document.getElementById('upload-progress');
+      const uploadProgressBar = document.getElementById('upload-progress-bar');
+      const toast = document.getElementById('toast');
+      const uploadForm = document.getElementById('upload-form');
+      const connectionStatus = document.getElementById('connection-status');
+      const statusIndicator = document.getElementById('status-indicator');
+      const statusTextDetail = document.getElementById('status-text-detail');
+      const wakeUpNotice = document.getElementById('wake-up-notice');
+      const statsCard = document.getElementById('stats-card');
+      const totalUploadsEl = document.getElementById('total-uploads');
+      const monsterMoodEl = document.getElementById('monster-mood');
+      const fileInfo = document.getElementById('file-info');
+      const fileDetails = document.getElementById('file-details');
+      const dropZone = document.getElementById('drop-zone');
+
+      // API configuration
+      const API_BASE_URL = window.location.origin;
+
+      // State variables
+      let isMonsterFed = false;
+      let isUploading = false;
+      let totalUploads = 0;
+      let uploadQueue = [];
+      let currentUploadIndex = 0;
+
+      // Utility functions
+      function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+      }
+
+      function getMoodEmoji(count) {
+        if (count === 0) return '😴';
+        if (count < 5) return '🙂';
+        if (count < 15) return '😊';
+        if (count < 50) return '😋';
+        if (count < 100) return '🤤';
+        return '🥳';
+      }
+
+      // Test backend connection with enhanced error handling
+      async function testConnection() {
+        const startTime = Date.now();
+        let showedWakeUpNotice = false;
+
+        try {
+          // Show wake-up notice after 3 seconds
+          const wakeUpTimeout = setTimeout(() => {
+            wakeUpNotice.classList.add('show');
+            showedWakeUpNotice = true;
+          }, 3000);
+
+          const response = await fetch(`${API_BASE_URL}/health`, {
+            method: 'GET',
+            cache: 'no-cache',
+            headers: {
+              'Cache-Control': 'no-cache'
+            }
+          });
+          
+          clearTimeout(wakeUpTimeout);
+          
+          if (response.ok) {
+            const healthData = await response.json();
+            statusIndicator.textContent = '🟢';
+            statusTextDetail.textContent = 'Backend connected';
+            
+            // Update stats
+            if (healthData.upload_count !== undefined) {
+              totalUploads = healthData.upload_count;
+              totalUploadsEl.textContent = totalUploads;
+              monsterMoodEl.textContent = getMoodEmoji(totalUploads);
+              statsCard.classList.remove('hidden');
+              
+              if (totalUploads > 0) {
+                galleryBtn.classList.remove('hidden');
+              }
+            }
+            
+            // Hide wake-up notice
+            if (showedWakeUpNotice) {
+              setTimeout(() => {
+                wakeUpNotice.classList.remove('show');
+              }, 1000);
+            }
+          } else {
+            throw new Error('Health check failed');
+          }
+        } catch (error) {
+          const duration = Date.now() - startTime;
+          
+          if (duration > 15000) {
+            statusIndicator.textContent = '🔴';
+            statusTextDetail.textContent = 'Backend offline';
+            showToast('Backend is not responding. Please try again later.', 'error');
+          } else {
+            statusIndicator.textContent = '🟡';
+            statusTextDetail.textContent = 'Waking up...';
+          }
+          
+          setTimeout(() => {
+            wakeUpNotice.classList.remove('show');
+          }, 500);
+        }
+      }
+
+      // Enhanced toast function
+      function showToast(message, type = "success", duration = 4000) {
+        toast.textContent = message;
+        toast.classList.remove("hidden");
+        toast.classList.add("show");
+
+        // Set colors based on type
+        const colors = {
+          success: "rgba(34, 197, 94, 0.9)",
+          error: "rgba(220, 38, 38, 0.9)",
+          warning: "rgba(245, 158, 11, 0.9)",
+          info: "rgba(59, 130, 246, 0.9)"
+        };
+
+        toast.style.backgroundColor = colors[type] || colors.success;
+
+        setTimeout(() => {
+          toast.classList.remove("show");
+          setTimeout(() => toast.classList.add("hidden"), 500);
+        }, duration);
+      }
+
+      // Monster state functions
+      function setMonsterHungry() {
+        isMonsterFed = false;
+        isUploading = false;
+        hungryMonster.classList.remove('hidden');
+        eatingMonster.classList.add('hidden');
+        yummyMonster.classList.add('hidden');
+        statusText.textContent = 'Feed Me!';
+        subtitle.textContent = 'Drag & drop or click to upload images';
+        uploadText.innerHTML = '📷 Upload';
+        uploadArea.classList.remove('hidden');
+        reuploadBtn.classList.add('hidden');
+        uploadProgress.classList.add('hidden');
+        fileInfo.style.display = 'none';
+        uploadProgressBar.style.width = '0%';
+        fileInput.value = '';
+        fileInput.disabled = false;
+        uploadQueue = [];
+        currentUploadIndex = 0;
+      }
+
+      function setMonsterEating() {
+        hungryMonster.classList.add('hidden');
+        eatingMonster.classList.remove('hidden');
+        yummyMonster.classList.add('hidden');
+        statusText.textContent = 'Nom nom...';
+        subtitle.textContent = `Processing ${currentUploadIndex + 1} of ${uploadQueue.length}`;
+        uploadText.innerHTML = '⏳ Uploading...';
+        uploadProgress.classList.remove('hidden');
+        fileInput.disabled = true;
+      }
+
+      function setMonsterFed() {
+        isMonsterFed = true;
+        hungryMonster.classList.add('hidden');
+        eatingMonster.classList.add('hidden');
+        yummyMonster.classList.remove('hidden');
+        yummyMonster.classList.add('monster-bounce');
+        setTimeout(() => yummyMonster.classList.remove('monster-bounce'), 600);
+        
+        if (uploadQueue.length === 1) {
+          statusText.textContent = 'Yummy!';
+          subtitle.textContent = 'Monster enjoyed that delicious image!';
+        } else {
+          statusText.textContent = 'So tasty!';
+          subtitle.textContent = `Monster devoured ${uploadQueue.length} delicious images!`;
+        }
+        
+        uploadArea.classList.add('hidden');
+        uploadProgress.classList.add('hidden');
+        fileInfo.style.display = 'none';
+        reuploadBtn.classList.remove('hidden');
+        galleryBtn.classList.remove('hidden');
+        
+        // Update stats
+        totalUploads += uploadQueue.length;
+        totalUploadsEl.textContent = totalUploads;
+        monsterMoodEl.textContent = getMoodEmoji(totalUploads);
+        statsCard.classList.remove('hidden');
+      }
+
+      // Enhanced progress simulation
+      function simulateProgress(fileIndex, totalFiles) {
+        let progress = 0;
+        const baseProgress = (fileIndex / totalFiles) * 100;
+        const fileProgress = 100 / totalFiles;
+        
+        const interval = setInterval(() => {
+          progress += Math.random() * 25;
+          if (progress > 90) {
+            progress = 90;
+            clearInterval(interval);
+          }
+          const totalProgress = baseProgress + (progress * fileProgress / 100);
+          uploadProgressBar.style.width = totalProgress + '%';
+        }, 200);
+        return interval;
+      }
+
+      // File validation
+      function validateFile(file) {
+        const maxSize = 16 * 1024 * 1024; // 16MB
+        const minSize = 100; // 100 bytes
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/bmp', 'image/webp', 'image/tiff', 'image/svg+xml'];
+
+        if (file.size > maxSize) {
+          return `File "${file.name}" is too large. Maximum size is 16MB.`;
+        }
+        
+        if (file.size < minSize) {
+          return `File "${file.name}" is too small. Minimum size is 100 bytes.`;
+        }
+
+        if (!allowedTypes.includes(file.type) && !file.name.match(/\.(jpg|jpeg|png|gif|bmp|webp|tiff|svg)$/i)) {
+          return `File "${file.name}" is not a supported image format.`;
+        }
+
+        return null;
+      }
+
+      // Show file information
+      function showFileInfo(files) {
+        if (files.length === 1) {
+          fileDetails.innerHTML = `
+            📁 ${files[0].name}<br>
+            📏 ${formatFileSize(files[0].size)}
+          `;
+        } else {
+          const totalSize = Array.from(files).reduce((sum, file) => sum + file.size, 0);
+          fileDetails.innerHTML = `
+            📁 ${files.length} files selected<br>
+            📏 Total size: ${formatFileSize(totalSize)}
+          `;
+        }
+        fileInfo.style.display = 'block';
+      }
+
+      // Upload files sequentially
+      async function uploadFiles(files) {
+        uploadQueue = Array.from(files);
+        currentUploadIndex = 0;
+        let successCount = 0;
+        let errors = [];
+
+        for (let i = 0; i < uploadQueue.length; i++) {
+          currentUploadIndex = i;
+          const file = uploadQueue[i];
+          
+          setMonsterEating();
+          const progressInterval = simulateProgress(i, uploadQueue.length);
+          
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch(`${API_BASE_URL}/upload`, {
+              method: 'POST',
+              body: formData,
+            });
+
+            const result = await response.json();
+            clearInterval(progressInterval);
+            
+            if (response.ok) {
+              successCount++;
+              console.log(`Upload ${i + 1} successful:`, result);
+            } else {
+              errors.push(`${file.name}: ${result.error}`);
+              console.error(`Upload ${i + 1} failed:`, result);
+            }
+
+          } catch (error) {
+            clearInterval(progressInterval);
+            errors.push(`${file.name}: Network error`);
+            console.error(`Upload ${i + 1} error:`, error);
+          }
+
+          // Complete progress for this file
+          const completeProgress = ((i + 1) / uploadQueue.length) * 100;
+          uploadProgressBar.style.width = completeProgress + '%';
+          
+          // Small delay between uploads
+          if (i < uploadQueue.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        }
+
+        // Show results
+        setTimeout(() => {
+          setMonsterFed();
+          
+          if (successCount > 0 && errors.length === 0) {
+            showToast(successCount === 1 
+              ? 'Image uploaded successfully! Monster is happy!' 
+              : `${successCount} images uploaded successfully! Monster is very happy!`, 
+              "success");
+          } else if (successCount > 0 && errors.length > 0) {
+            showToast(`${successCount} uploads succeeded, ${errors.length} failed. Check console for details.`, "warning");
+            console.warn('Upload errors:', errors);
+          } else {
+            showToast('All uploads failed. Please try again.', "error");
+            console.error('All upload errors:', errors);
+          }
+          
+          isUploading = false;
+        }, 500);
+      }
+
+      // Drag and drop functionality
+      ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, preventDefaults, false);
+        document.body.addEventListener(eventName, preventDefaults, false);
+      });
+
+      function preventDefaults(e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+
+      ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, highlight, false);
+      });
+
+      ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, unhighlight, false);
+      });
+
+      function highlight() {
+        if (!isUploading) {
+          dropZone.classList.add('drag-over');
+        }
+      }
+
+      function unhighlight() {
+        dropZone.classList.remove('drag-over');
+      }
+
+      dropZone.addEventListener('drop', handleDrop, false);
+
+      function handleDrop(e) {
+        if (isUploading) return;
+
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        
+        handleFiles(files);
+      }
+
+      // Handle file selection (both drag-drop and file input)
+      function handleFiles(files) {
+        if (!files || files.length === 0) return;
+
+        // Validate all files first
+        const validFiles = [];
+        const errors = [];
+
+        Array.from(files).forEach(file => {
+          const error = validateFile(file);
+          if (error) {
+            errors.push(error);
+          } else {
+            validFiles.push(file);
+          }
+        });
+
+        if (errors.length > 0) {
+          showToast(`Validation errors: ${errors[0]}`, "error");
+          console.warn('File validation errors:', errors);
+          hungryMonster.classList.add('shake');
+          setTimeout(() => hungryMonster.classList.remove('shake'), 500);
+          return;
+        }
+
+        if (validFiles.length === 0) {
+          showToast('No valid files to upload.', "error");
+          return;
+        }
+
+        console.log(`Starting upload of ${validFiles.length} files`);
+        isUploading = true;
+        showFileInfo(validFiles);
+        uploadFiles(validFiles);
+      }
+
+      // Prevent form submission
+      uploadForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        return false;
+      });
+
+      // File input handler
+      fileInput.addEventListener('change', (event) => {
+        if (isUploading) return;
+        handleFiles(event.target.files);
+      });
+
+      // Re-upload button handler
+      reuploadBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        console.log('Re-upload button clicked');
+        setMonsterHungry();
+      });
+
+      // Initialize the app
+      testConnection();
+
+      // Retry connection periodically if offline
+      setInterval(() => {
+        if (statusIndicator.textContent === '🔴' || statusIndicator.textContent === '🟡') {
+          testConnection();
+        }
+      }, 30000);
+
+      // Add keyboard shortcuts
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && isUploading) {
+          // Could add upload cancellation here
+        }
+        if ((e.ctrlKey || e.metaKey) && e.key === 'u' && !isUploading) {
+          e.preventDefault();
+          fileInput.click();
+        }
+      });
+
+      console.log('Monster Feed App initialized! 🍽️');
+    });
+  </script>
+</body>
+</html>
