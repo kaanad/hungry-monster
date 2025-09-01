@@ -7,7 +7,8 @@ services:
   - type: web
     name: monster-feed-backend
     env: python
-    buildCommand: "pip install -r requirements.txt"
+    # UPDATED LINE: Run the build script before installing Python packages
+    buildCommand: "./build.sh && pip install -r requirements.txt"
     startCommand: "gunicorn app:app"
     envVars:
       - key: DATABASE_URL
